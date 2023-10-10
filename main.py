@@ -1,18 +1,29 @@
 #!/usr/bin/python3
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Float, func, desc
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
-#all classes comes here
+# Define your models here
 class Restaurant(Base):
     __tablename__ = 'restaurants'
     id = Column(Integer, primary_key=True)
     name = Column(String)
-    price = Column(Integer)
+    price = Column(Float)
     reviews = relationship('Review', back_populates='restaurant')
     customers = relationship('Customer', secondary='reviews', back_populates='restaurants')
+
+    @property
+    def all_reviews(self):
+        # Get all reviews for this restaurant in the requested format
+        return [f"Review for {self.name} by {review.customer.full_name()}: {review.rating} stars." for review in self.reviews]
+
+    @classmethod
+    def fanciest(cls):
+        # Find the restaurant with the highest price
+        return session.query(cls).order_by(desc(cls.price)).first()
 
 class Review(Base):
     __tablename__ = 'reviews'
@@ -23,6 +34,11 @@ class Review(Base):
     restaurant = relationship('Restaurant', back_populates='reviews')
     customer = relationship('Customer', back_populates='reviews')
 
+    def full_review(self):
+        restaurant_name = self.restaurant.name
+        customer_name = self.customer.full_name()
+        return f"Review for {restaurant_name} by {customer_name}: {self.rating} stars."
+
 class Customer(Base):
     __tablename__ = 'customers'
     id = Column(Integer, primary_key=True)
@@ -31,80 +47,71 @@ class Customer(Base):
     reviews = relationship('Review', back_populates='customer')
     restaurants = relationship('Restaurant', secondary='reviews', back_populates='customers')
 
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}"
 
+    def favorite_restaurant(self):
+        # Use a subquery to find the restaurant with the highest rating for this customer
+        subquery = session.query(Review.restaurant_id, func.max(Review.rating).label('max_rating')).filter_by(customer_id=self.id).group_by(Review.restaurant_id).subquery()
+        favorite_restaurant_id = session.query(subquery.c.restaurant_id).order_by(desc(subquery.c.max_rating)).limit(1).scalar()
+        return session.query(Restaurant).get(favorite_restaurant_id)
 
+    def add_review(self, restaurant, rating):
+        # Create a new review
+        review = Review(restaurant=restaurant, customer=self, rating=rating)
+        session.add(review)
+        session.commit()
+
+    def delete_reviews(self, restaurant):
+        # Delete all reviews by this customer for the specified restaurant
+        session.query(Review).filter_by(customer=self, restaurant=restaurant).delete()
+        session.commit()
+
+# Create SQLite database and session
 engine = create_engine('sqlite:///database.db')
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-# Review class methods
-class Review(Base):
-    # ...
+# Create some sample data
 
-    def customer(self):
-        return self.customer
+# Create Restaurants
+restaurant1 = Restaurant(name="Restaurant A", price=50.0)
+restaurant2 = Restaurant(name="Restaurant B", price=60.0)
 
-    def restaurant(self):
-        return self.restaurant
+# Create Customers
+customer1 = Customer(first_name="Humphrey", last_name="Njuguna")
+customer2 = Customer(first_name="Juliet", last_name="Nyongesa")
 
-    def full_review(self):
-        return f'Review for {self.restaurant.name} by {self.customer.full_name()}: {self.rating} stars.'
+# Add Reviews
+customer1.add_review(restaurant1, 4)
+customer1.add_review(restaurant2, 5)
+customer2.add_review(restaurant1, 3)
 
-# Restaurant class methods
-class Restaurant(Base):
-    # ...
+# Commit the data to the database
+session.commit()
 
-    def reviews(self):
-        return self.reviews
+# Demonstrate the methods
 
-    def customers(self):
-        return self.customers
+# Customer full_name() method
+print(customer1.full_name())  # Output: Humphrey Njuguna
 
-    @classmethod
-    def fanciest(cls):
-        return session.query(cls).order_by(cls.price.desc()).first()
+# Customer favorite_restaurant() method
+favorite_restaurant = customer1.favorite_restaurant()
+print(f"{customer1.full_name()}'s favorite restaurant is {favorite_restaurant.name}.")
 
-    def all_reviews(self):
-        reviews = []
-        for review in self.reviews:
-            reviews.append(review.full_review())
-        return reviews
+# Customer reviews() method
+customer_reviews = customer1.reviews
+for review in customer_reviews:
+    print(review.full_review())
 
-# Customer class methods
-class Customer(Base):
-    # ...
+# Restaurant fanciest() method
+fanciest_restaurant = Restaurant.fanciest()
+print(f"The fanciest restaurant is {fanciest_restaurant.name} with a price of ${fanciest_restaurant.price}.")
 
-    def reviews(self):
-        return self.reviews
+# Restaurant all_reviews() method
+restaurant1_reviews = restaurant1.all_reviews
+for review in restaurant1_reviews:
+    print(review)
 
-    def restaurants(self):
-        return self.restaurants
-
-    def full_name(self):
-        return f'{self.first_name} {self.last_name}'
-
-    def favorite_restaurant(self):
-        max_rating = 0
-        favorite_restaurant = None
-        for review in self.reviews:
-            if review.rating > max_rating:
-                max_rating = review.rating
-                favorite_restaurant = review.restaurant
-        return favorite_restaurant
-
-    def add_review(self, restaurant, rating):
-        new_review = Review(restaurant=restaurant, customer=self, rating=rating)
-        session.add(new_review)
-        session.commit()
-
-    def delete_reviews(self, restaurant):
-        reviews_to_delete = [review for review in self.reviews if review.restaurant == restaurant]
-        for review in reviews_to_delete:
-            session.delete(review)
-        session.commit()
-
-
-
-
-
+# ... Your code continues ...
